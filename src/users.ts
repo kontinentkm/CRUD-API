@@ -1,5 +1,6 @@
-import express, { Request, Response } from 'express';
-import { v4 as uuidv4 } from 'uuid';
+import { IncomingMessage, ServerResponse } from "node:http";
+import { parse } from "node:url";
+import { v4 as uuidv4 } from "uuid";
 
 interface User {
   id: string;
@@ -8,90 +9,147 @@ interface User {
   hobbies: string[];
 }
 
-const users: User[] = [];
-const router = express.Router();
+let users: User[] = [];
 
-// GET all users
-router.get('/', (req: Request, res: Response) => {
-  res.status(200).json(users);
-});
+const sendResponse = (
+  res: ServerResponse,
+  statusCode: number,
+  data: object
+) => {
+  res.writeHead(statusCode, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(data));
+};
 
-// GET user by ID
-router.get('/:userId', (req: Request, res: Response) => {
-  const { userId } = req.params;
-  
-  if (!isValidUUID(userId)) {
-    return res.status(400).json({ message: 'Invalid userId' });
-  }
-
-  const user = users.find(u => u.id === userId);
-  
-  if (!user) {
-    return res.status(404).json({ message: 'User not found' });
-  }
-
-  res.status(200).json(user);
-});
-
-// POST create user
-router.post('/', (req: Request, res: Response) => {
-  const { username, age, hobbies } = req.body;
-
-  if (!username || typeof age !== 'number' || !Array.isArray(hobbies)) {
-    return res.status(400).json({ message: 'Missing required fields' });
-  }
-
-  const newUser: User = { id: uuidv4(), username, age, hobbies };
-  users.push(newUser);
-  
-  res.status(201).json(newUser);
-});
-
-// PUT update user
-router.put('/:userId', (req: Request, res: Response) => {
-  const { userId } = req.params;
-  
-  if (!isValidUUID(userId)) {
-    return res.status(400).json({ message: 'Invalid userId' });
-  }
-
-  const index = users.findIndex(u => u.id === userId);
-  
-  if (index === -1) {
-    return res.status(404).json({ message: 'User not found' });
-  }
-
-  const { username, age, hobbies } = req.body;
-  
-  if (username !== undefined) users[index].username = username;
-  if (age !== undefined) users[index].age = age;
-  if (hobbies !== undefined) users[index].hobbies = hobbies;
-  
-  res.status(200).json(users[index]);
-});
-
-// DELETE user
-router.delete('/:userId', (req: Request, res: Response) => {
-  const { userId } = req.params;
-  
-  if (!isValidUUID(userId)) {
-    return res.status(400).json({ message: 'Invalid userId' });
-  }
-
-  const index = users.findIndex(u => u.id === userId);
-  
-  if (index === -1) {
-    return res.status(404).json({ message: 'User not found' });
-  }
-
-  users.splice(index, 1);
-  res.status(204).send();
-});
-
-// Helper function to validate UUID
 const isValidUUID = (id: string): boolean => {
-  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  const uuidRegex =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   return uuidRegex.test(id);
 };
 
-export const usersRouter = router;
+export const usersHandler = (req: IncomingMessage, res: ServerResponse) => {
+  const { method, url } = req;
+  const parsedUrl = parse(url || "", true);
+  const path = parsedUrl.pathname?.split("/").filter(Boolean);
+
+  // GET
+  if (method === "GET" && path?.[0] === "api" && path?.[1] === "users") {
+    if (path.length === 2) {
+      sendResponse(res, 200, users); // Return all users
+    } else if (path.length === 3) {
+      const userId = path[2];
+      if (!isValidUUID(userId)) {
+        sendResponse(res, 400, { message: "Invalid userId" });
+      } else {
+        const user = users.find((u) => u.id === userId);
+        if (!user) {
+          sendResponse(res, 404, { message: "User not found" });
+        } else {
+          sendResponse(res, 200, user);
+        }
+      }
+    }
+  }
+
+  // POST
+  else if (method === "POST" && path?.[0] === "api" && path?.[1] === "users") {
+    let body = "";
+    req.on("data", (chunk) => {
+      body += chunk.toString();
+    });
+    req.on("end", () => {
+      // Проверка на пустое тело
+      if (!body) {
+        sendResponse(res, 400, { message: "Empty body" });
+        return;
+      }
+
+      try {
+        const { username, age, hobbies } = JSON.parse(body);
+
+        // Проверка на корректные данные
+        if (!username || typeof age !== "number" || !Array.isArray(hobbies)) {
+          sendResponse(res, 400, { message: "Missing required fields" });
+        } else {
+          const newUser: User = { id: uuidv4(), username, age, hobbies };
+          users.push(newUser);
+          sendResponse(res, 201, newUser);
+        }
+      } catch (error) {
+        // Отлавливаем ошибку, если JSON некорректен
+        sendResponse(res, 400, { message: "Invalid JSON" });
+      }
+    });
+  }
+
+  // PUT
+  else if (
+    method === "PUT" &&
+    path?.[0] === "api" &&
+    path?.[1] === "users" &&
+    path.length === 3
+  ) {
+    const userId = path[2];
+    if (!isValidUUID(userId)) {
+      sendResponse(res, 400, { message: "Invalid userId" });
+    } else {
+      let body = "";
+      req.on("data", (chunk) => {
+        body += chunk.toString();
+      });
+
+      req.on("end", () => {
+        if (!body) {
+          // Если тело запроса пустое
+          sendResponse(res, 400, { message: "Request body is empty" });
+          return;
+        }
+
+        let parsedBody;
+        try {
+          parsedBody = JSON.parse(body);
+        } catch (error) {
+          // Если тело запроса не валидный JSON
+          sendResponse(res, 400, { message: "Invalid JSON format" });
+          return;
+        }
+
+        const { username, age, hobbies } = parsedBody;
+        const userIndex = users.findIndex((u) => u.id === userId);
+
+        if (userIndex === -1) {
+          sendResponse(res, 404, { message: "User not found" });
+        } else {
+          if (username !== undefined) users[userIndex].username = username;
+          if (age !== undefined) users[userIndex].age = age;
+          if (hobbies !== undefined) users[userIndex].hobbies = hobbies;
+          sendResponse(res, 200, users[userIndex]);
+        }
+      });
+    }
+  }
+
+  // DELETE
+  else if (
+    method === "DELETE" &&
+    path?.[0] === "api" &&
+    path?.[1] === "users" &&
+    path.length === 3
+  ) {
+    const userId = path[2];
+    if (!isValidUUID(userId)) {
+      sendResponse(res, 400, { message: "Invalid userId" });
+    } else {
+      const userIndex = users.findIndex((u) => u.id === userId);
+      if (userIndex === -1) {
+        sendResponse(res, 404, { message: "User not found" });
+      } else {
+        users.splice(userIndex, 1);
+        sendResponse(res, 204, {});
+      }
+    }
+  }
+
+  else {
+    sendResponse(res, 404, { message: "Route not found" });
+  }
+};
