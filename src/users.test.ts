@@ -1,58 +1,99 @@
-import request from 'supertest';
-import express from 'express';
-import { usersRouter } from './users';
+import request from "supertest";
+import http from "node:http";
+import { usersHandler } from "./users";
 
-const app = express();
-app.use(express.json());
-app.use('/api/users', usersRouter);
+const createServer = () => {
+  const server = http.createServer(usersHandler);
+  return server.listen(4000);
+};
 
-describe('Users API', () => {
-  it('should return an empty array when GET api/users', async () => {
-    const response = await request(app).get('/api/users');
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual([]);
+describe("Users API", () => {
+  let server: http.Server;
+
+  beforeEach(() => {
+    server = createServer();
   });
 
-  it('should create a new user with POST api/users', async () => {
-    const newUser = { username: 'John', age: 30, hobbies: ['reading', 'gaming'] };
-    const response = await request(app).post('/api/users').send(newUser);
-    
-    expect(response.status).toBe(201);
-    expect(response.body).toMatchObject(newUser);
-    expect(response.body).toHaveProperty('id');
+  afterEach((done) => {
+    server.close(done);
   });
 
-  it('should return the created user by GET api/users/{userId}', async () => {
-    const newUser = { username: 'Jane', age: 25, hobbies: ['music'] };
-    const createResponse = await request(app).post('/api/users').send(newUser);
-    
-    const userId = createResponse.body.id;
-    const response = await request(app).get(`/api/users/${userId}`);
-    
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual(createResponse.body);
+  it("should return an empty array when getting all users", async () => {
+    const res = await request(server).get("/api/users");
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
   });
 
-  it('should update an existing user with PUT api/users/{userId}', async () => {
-    const newUser = { username: 'Alice', age: 28, hobbies: ['sports'] };
-    const createResponse = await request(app).post('/api/users').send(newUser);
-    
-    const userId = createResponse.body.id;
-    const updatedUser = { username: 'Alice Updated', age: 29, hobbies: ['sports', 'reading'] };
-    const response = await request(app).put(`/api/users/${userId}`).send(updatedUser);
-    
-    expect(response.status).toBe(200);
-    expect(response.body).toMatchObject(updatedUser);
-    expect(response.body.id).toBe(userId);
+  it("should create a new user with a POST request", async () => {
+    const newUser = {
+      username: "john_doe",
+      age: 25,
+      hobbies: ["reading", "swimming"],
+    };
+
+    const res = await request(server).post("/api/users").send(newUser);
+
+    expect(res.status).toBe(201);
+    expect(res.body).toHaveProperty("id");
+    expect(res.body.username).toBe(newUser.username);
+    expect(res.body.age).toBe(newUser.age);
+    expect(res.body.hobbies).toEqual(newUser.hobbies);
   });
 
-  it('should delete a user with DELETE api/users/{userId}', async () => {
-    const newUser = { username: 'Bob', age: 32, hobbies: ['cooking'] };
-    const createResponse = await request(app).post('/api/users').send(newUser);
-    
-    const userId = createResponse.body.id;
-    const response = await request(app).delete(`/api/users/${userId}`);
-    
-    expect(response.status).toBe(204);
+  it("should get a user by ID with a GET request", async () => {
+    const newUser = {
+      username: "john_doe",
+      age: 25,
+      hobbies: ["reading", "swimming"],
+    };
+    const createRes = await request(server).post("/api/users").send(newUser);
+    const createdUser = createRes.body;
+
+    const res = await request(server).get(`/api/users/${createdUser.id}`);
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual(createdUser);
+  });
+
+  it("should update an existing user with a PUT request", async () => {
+    const newUser = {
+      username: "john_doe",
+      age: 25,
+      hobbies: ["reading", "swimming"],
+    };
+    const createRes = await request(server).post("/api/users").send(newUser);
+    const createdUser = createRes.body;
+
+    const updatedUser = {
+      username: "jane_doe",
+      age: 28,
+      hobbies: ["reading", "dancing"],
+    };
+    const res = await request(server)
+      .put(`/api/users/${createdUser.id}`)
+      .send(updatedUser);
+
+    expect(res.status).toBe(200);
+    expect(res.body.username).toBe(updatedUser.username);
+    expect(res.body.age).toBe(updatedUser.age);
+    expect(res.body.hobbies).toEqual(updatedUser.hobbies);
+  });
+
+  it("should delete a user with a DELETE request", async () => {
+    const newUser = {
+      username: "john_doe",
+      age: 25,
+      hobbies: ["reading", "swimming"],
+    };
+    const createRes = await request(server).post("/api/users").send(newUser);
+    const createdUser = createRes.body;
+
+    const deleteRes = await request(server).delete(
+      `/api/users/${createdUser.id}`
+    );
+    expect(deleteRes.status).toBe(204);
+
+    const getRes = await request(server).get(`/api/users/${createdUser.id}`);
+    expect(getRes.status).toBe(404);
+    expect(getRes.body.message).toBe("User not found");
   });
 });
